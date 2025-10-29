@@ -1,0 +1,60 @@
+services:
+  zoo1:
+    image: confluentinc/cp-zookeeper:${CONFLUENT_VERSION}
+    hostname: zoo1
+    container_name: zoo1
+    ports:
+      - "${ZOOKEEPER_EXTERNAL_PORT}:${ZOOKEEPER_CLIENT_PORT}"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_SERVER_ID: ${ZOOKEEPER_SERVER_ID}
+      ZOOKEEPER_SERVERS: zoo1:2888:3888
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+
+  kafka1:
+    image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
+    hostname: kafka1
+    container_name: kafka1
+    ports:
+      - "${KAFKA_EXTERNAL_PORT}:${KAFKA_EXTERNAL_PORT}"
+      - "${KAFKA_DOCKER_PORT}:${KAFKA_DOCKER_PORT}"
+      - "${KAFKA_JMX_PORT}:${KAFKA_JMX_PORT}"
+    environment:
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:${KAFKA_INTERNAL_PORT},EXTERNAL://${DOCKER_HOST_IP}:${KAFKA_EXTERNAL_PORT},DOCKER://host.docker.internal:${KAFKA_DOCKER_PORT}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_ZOOKEEPER_CONNECT: "zoo1:${ZOOKEEPER_CLIENT_PORT}"
+      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: ${KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR}
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: ${KAFKA_TRANSACTION_STATE_LOG_MIN_ISR}
+      KAFKA_JMX_PORT: ${KAFKA_JMX_PORT}
+      KAFKA_JMX_HOSTNAME: ${DOCKER_HOST_IP}
+      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    depends_on:
+      - zoo1
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:${KAFKA_UI_VERSION}
+    hostname: kafka-ui
+    container_name: kafka-ui
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: ${KAFKA_CLUSTER_NAME}
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:${KAFKA_INTERNAL_PORT}
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zoo1:${ZOOKEEPER_CLIENT_PORT}
+    depends_on:
+      - kafka1
+      - zoo1
+
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
