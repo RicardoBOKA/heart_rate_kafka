@@ -1,4 +1,14 @@
+# Environnements virtuels
 .venv/
+
+# Fichiers de configuration
 .vscode/
-zprivate/
+
+# Variables d'environnement
 .env
+
+# Fichiers privées
+zprivate/
+
+# Python
+__pycache__/
