@@ -12,6 +12,8 @@ services:
     volumes:
       - zookeeper-data:/var/lib/zookeeper/data
       - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - data-net
 
   kafka1:
     image: confluentinc/cp-kafka:${CONFLUENT_VERSION}
@@ -39,6 +41,8 @@ services:
       - kafka-data:/var/lib/kafka/data
     depends_on:
       - zoo1
+    networks:
+      - data-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:${KAFKA_UI_VERSION}
@@ -53,8 +57,156 @@ services:
     depends_on:
       - kafka1
       - zoo1
+    networks:
+      - data-net
+
+  spark-master:
+    image: apache/spark:${SPARK_VERSION}
+    hostname: spark-master
+    container_name: spark-master
+
+    # command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    user: root
+    command: >
+      bash -c "/opt/spark/sbin/start-master.sh -p 7077
+      && sleep 5
+      && tail -f /opt/spark/logs/*.out || sleep infinity"
+    # L'image ne contient pas directement pandas, numpy, scikit-learn, etc... Il faut les installer manuellement.  EX : 'pip install pandas numpy scikit-learn'
+
+    ports:
+      - "${SPARK_MASTER_WEBUI_PORT}:8080"
+      - "${SPARK_MASTER_PORT}:7077"
+    environment:
+      - SPARK_NO_DAEMONIZE=false
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:${KAFKA_INTERNAL_PORT}
+    volumes:
+      - spark-master-data:/opt/spark/work
+      - spark-master-logs:/opt/spark/logs
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-apps/spark-jars:/opt/spark/jars-extra
+
+    # healthcheck:
+    #   test: [ "CMD", "curl", "-f", "http://localhost:8080" ]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+        
+    networks:
+      - data-net
+
+  spark-worker-1:
+    image: apache/spark:${SPARK_VERSION}
+    hostname: spark-worker-1
+    container_name: spark-worker-1
+
+    # command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    user: root
+    command: >
+      bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077
+      && sleep 5
+      && tail -f /opt/spark/logs/*.out || sleep infinity"
+    # L'image ne contient pas directement pandas, numpy, scikit-learn, etc... Il faut les installer manuellement.  EX : 'pip install pandas numpy scikit-learn'
+    
+    ports:
+      - "${SPARK_WORKER_WEBUI_PORT_1}:8081"
+    environment:
+      - SPARK_NO_DAEMONIZE=false
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES}
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY}
+      - SPARK_MASTER=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:${KAFKA_INTERNAL_PORT}
+    volumes:
+      - spark-worker-1-data:/opt/spark/work
+      - spark-worker-1-logs:/opt/spark/logs
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-apps/spark-jars:/opt/spark/jars-extra
+    depends_on:
+      - spark-master
+    networks:
+      - data-net
+
+  spark-worker-2:
+    image: apache/spark:${SPARK_VERSION}
+    hostname: spark-worker-2
+    container_name: spark-worker-2
+
+    # command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    user: root
+    command: >
+      bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077
+      && sleep 5
+      && tail -f /opt/spark/logs/*.out || sleep infinity"
+
+    # Explication :
+    # - Avec la version commentée (spark-class), le worker Spark est lancé « nu » : pas de script d’enrobage, ni d’attente, ni suivi de logs.
+    #   Les logs peuvent apparaître dans Portainer/`docker logs` seulement si le process principal écrit sur stdout/stderr, 
+    #   ce qui n'est pas toujours garanti ici.
+    # - La version active utilise le script start-worker.sh (recommandé) et enchaîne avec tail -f sur les fichiers de logs.
+    #   Cela redirige explicitement le contenu des logs Spark vers la sortie standard du container.
+    #   Résultat : tu vois bien les logs dans Portainer, docker logs, etc.
+    #
+    # La meilleure définition est donc celle active (avec tail -f), car
+    # 1) Elle assure la visibilité des logs dans tes outils de gestion Docker.
+    # 2) Elle suit les bonnes pratiques des images Spark officielles.
+    # 3) Elle garantit que le container reste "vivant" (évite la sortie trop rapide du process principal).
+    
+    ports:
+      - "${SPARK_WORKER_WEBUI_PORT_2}:8081"
+    environment:
+      - SPARK_NO_DAEMONIZE=false
+      - SPARK_WORKER_CORES=${SPARK_WORKER_CORES}
+      - SPARK_WORKER_MEMORY=${SPARK_WORKER_MEMORY}
+      - SPARK_MASTER=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:${KAFKA_INTERNAL_PORT}
+    volumes:
+      - spark-worker-2-data:/opt/spark/work
+      - spark-worker-2-logs:/opt/spark/logs
+      - ./spark-apps:/opt/spark-apps
+      - ./spark-apps/spark-jars:/opt/spark/jars-extra
+    depends_on:
+      - spark-master
+    networks:
+      - data-net
+
+  jupyter:
+    image: jupyter/pyspark-notebook:${JUPYTER_VERSION}
+    hostname: jupyter
+    container_name: jupyter
+    ports:
+      - "${JUPYTER_PORT}:8888"
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - GRANT_SUDO=yes
+      - SPARK_MASTER=spark://spark-master:7077
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN}
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:${KAFKA_INTERNAL_PORT}
+    volumes:
+      - ./spark-apps:/home/jovyan/work
+      - jupyter-data:/home/jovyan
+      - ./spark-apps/spark-jars:/opt/spark/jars-extra
+
+    depends_on:
+      - spark-master
+      - kafka1
+        # condition: service_healthy
+    networks:
+      - data-net
 
 volumes:
   zookeeper-data:
   zookeeper-logs:
   kafka-data:
+  spark-master-data:
+  spark-master-logs:
+  spark-worker-1-data:
+  spark-worker-1-logs:
+  spark-worker-2-data:
+  spark-worker-2-logs:
+  jupyter-data:
+
+networks:
+  data-net:
+    driver: bridge
